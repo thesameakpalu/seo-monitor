@@ -12,15 +12,23 @@ sites:
   gtdc:
     url: https://gtdc.gov.gh
     max_pages: 1000
-    # Leftovers from the charity/travel demo theme found in the audit.
-    extra_placeholders: ["mytravel.test", "New Section", "Raise Your Hands", "donation", "charity", "test"]
+    # Exact phrases from the charity/travel demo theme. Prefer phrases over single words:
+    # "donation" or "test" also match real news ("Shared Donation Fund", "test kits").
+    extra_placeholders:
+      - "mytravel.test"
+      - "New Section"
+      - "Raise Your Hands"
+      - "Charity Fundation"        # the theme's own misspelling
+      - "Why Donation For Charity"
+      - "Healing Hands, Open Hearts"
+      - "Smart Energy Grid Utility Services"
     placeholder_whitelist: []
     key_urls: []
 
   gtm:
     url: https://www.gtm.com.gh
     max_pages: 1000
-    extra_placeholders: ["mytravel.test", "test"]
+    extra_placeholders: ["mytravel.test"]
     thin_content_patterns: ["/location/", "/listing/", "/brief/"]
     key_urls: []
 

@@ -161,3 +161,16 @@ def test_health_score():
     assert health_score([], 10) == 100
     assert health_score([_finding("homepage_not_200", [Item("x")])], 1) == 49
     assert health_score([_finding("title_missing", [Item("a")] * 10)], 10) == 92
+
+
+def test_detects_client_side_rendering():
+    shell = (
+        '<html><head><title>Hi</title></head><body><header><a href="/">Home</a></header>'
+        '<template data-dgst="BAILOUT_TO_CLIENT_SIDE_RENDERING"></template>'
+        '<script src="/_next/static/chunks/main.js"></script></body></html>'
+    )
+    assert "client-side" in parse_html(shell, "https://x/").js_hint
+    spa = '<html><body><div id="root"></div><script src="/app.js"></script></body></html>'
+    assert "#root" in parse_html(spa, "https://x/").js_hint
+    ssr = '<html><body><div id="__next"><main><h1>Hello</h1></main></div></body></html>'
+    assert parse_html(ssr, "https://x/").js_hint is None

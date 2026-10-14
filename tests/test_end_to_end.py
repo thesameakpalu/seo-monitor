@@ -182,3 +182,36 @@ async def test_homepage_down():
     result = await do_crawl({})
     found = by_id(run_checks(Context(result))[0])
     assert "homepage_not_200" in found
+
+
+async def test_js_rendered_pages_are_not_called_empty():
+    routes = build_routes()
+    routes[f"{SITE}/app/"] = (
+        200,
+        {"content-type": "text/html"},
+        '<html><head><title>App</title><meta name="description" content="d">'
+        '</head><body><div id="root"></div><script src="/a.js"></script>'
+        "</body></html>",
+    )
+    routes[f"{SITE}/"] = (
+        routes[f"{SITE}/"][0],
+        routes[f"{SITE}/"][1],
+        routes[f"{SITE}/"][2].replace("</main>", '<a href="/app/">app</a></main>'),
+    )
+    found = by_id(run_checks(Context(await do_crawl(routes)))[0])
+    assert f"{SITE}/app/" in urls(found["client_side_rendered"])
+    for check_id in ["empty_page", "h1_missing", "thin_content"]:
+        assert f"{SITE}/app/" not in urls(found.get(check_id) or type("F", (), {"items": []}))
+
+
+async def test_recheck_does_not_hide_image_or_host_issues(tmp_path):
+    store = Store(tmp_path / "h.db")
+    audit(await do_crawl(build_routes()), store, tmp_path / "r")
+    recheck = urls_to_recheck(store, "example.org", "full")
+    assert f"{SITE}/photo.png" not in recheck and "http://example.org/" not in recheck
+    second = audit(await do_crawl(build_routes(), recheck=recheck), store, tmp_path / "r")
+    status = {k: c.status for k, c in second.changes.items()}
+    for check_id in ["image_too_large", "image_legacy_format", "host_redirect_chain"]:
+        assert status[check_id] == "persisting", (check_id, status[check_id])
+    assert not [c for c in second.changes.values() if c.status in ("new", "resolved")]
+    store.close()

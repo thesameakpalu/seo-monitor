@@ -9,6 +9,37 @@ from functools import cache
 from .base import Context, Item, check, group_by, on_pages
 
 
+def _needs_js(ctx: Context, page) -> bool:
+    """Server HTML is an app shell; text-based checks would give false answers."""
+    return bool(page.doc.js_hint) and page.doc.word_count < ctx.profile.thin_words
+
+
+def _server_rendered(ctx: Context):
+    return [p for p in ctx.indexable if not _needs_js(ctx, p)]
+
+
+@check(
+    "client_side_rendered",
+    "medium",
+    "Page content only appears after JavaScript runs",
+    "The server sends a near-empty page and the browser builds the content with JavaScript. "
+    "You see a full page, but Google indexes it later and less reliably, and WhatsApp/Facebook "
+    "previews, Bing and AI crawlers may see nothing. Content checks are skipped for these pages; "
+    "they would need a rendering browser to measure.",
+    "Render the content on the server. Next.js: keep pages as server components, wrap "
+    "useSearchParams()/browser-only code in <Suspense>, avoid dynamic(..., { ssr: false }) for "
+    "main content. React SPA: move to SSR/SSG (Next.js, Remix, Astro) or pre-render.",
+)
+def client_side_rendered(ctx: Context):
+    for page in ctx.indexable:
+        if _needs_js(ctx, page):
+            yield Item(
+                page.final_url,
+                f"{page.doc.js_hint}; server HTML has "
+                f"{page.doc.word_count} words of main content",
+            )
+
+
 def _dupes(ctx: Context, value) -> dict[str, list[str]]:
     pairs = [(value(p), p.final_url) for p in ctx.indexable if value(p)]
     return {k: v for k, v in group_by(pairs).items() if len(v) > 1}
@@ -102,7 +133,7 @@ def meta_description_duplicate(ctx: Context):
     "Add one visible H1 that describes the page.",
 )
 def h1_missing(ctx: Context):
-    for page in ctx.indexable:
+    for page in _server_rendered(ctx):
         if not any(page.doc.h1s):
             yield Item(page.final_url)
 
@@ -146,7 +177,7 @@ def og_tags_missing(ctx: Context):
 )
 def empty_page(ctx: Context):
     limit = ctx.profile.empty_words
-    for page in ctx.indexable:
+    for page in _server_rendered(ctx):
         if page.url != ctx.crawl.start_url and page.doc.word_count < limit:
             yield Item(page.final_url, f"{page.doc.word_count} words of main content")
 
@@ -161,7 +192,7 @@ def empty_page(ctx: Context):
 )
 def thin_content(ctx: Context):
     p = ctx.profile
-    for page in ctx.indexable:
+    for page in _server_rendered(ctx):
         words = page.doc.word_count
         if not p.empty_words <= words < p.thin_words:
             continue
@@ -183,7 +214,9 @@ def thin_content(ctx: Context):
 def duplicate_content(ctx: Context):
     min_words = ctx.profile.empty_words
     pairs = [
-        (p.doc.content_hash, p.final_url) for p in ctx.indexable if p.doc.word_count >= min_words
+        (p.doc.content_hash, p.final_url)
+        for p in _server_rendered(ctx)
+        if p.doc.word_count >= min_words
     ]
     for pages in group_by(pairs).values():
         if len(pages) > 1:

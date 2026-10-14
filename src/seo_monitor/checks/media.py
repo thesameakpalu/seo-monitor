@@ -40,6 +40,7 @@ def presigned_urls(ctx: Context):
     "Social sharing image (og:image) is broken",
     "When the og:image fails, links shared on WhatsApp/Facebook/LinkedIn show no picture.",
     "Point og:image at a permanent, public image URL that returns 200.",
+    scope="resource",
 )
 def og_image_broken(ctx: Context):
     pairs = []
@@ -62,6 +63,7 @@ def og_image_broken(ctx: Context):
     "Broken images look unprofessional and lose image-search traffic.",
     "Re-upload the image or fix its URL.",
     quick=False,
+    scope="resource",
 )
 def image_broken(ctx: Context):
     for src, pages in _image_pages(ctx).items():
@@ -76,6 +78,7 @@ def image_broken(ctx: Context):
     "Images without alt text",
     "Alt text describes images to screen readers and image search.",
     'Add a short description in the alt attribute (use alt="" only for decorative images).',
+    scope="resource",
 )
 def image_missing_alt(ctx: Context):
     pairs = [
@@ -92,6 +95,7 @@ def image_missing_alt(ctx: Context):
     "Heavy images slow pages down, especially on mobile data in Ghana.",
     "Resize to the displayed size and compress (WebP/AVIF, ~80% quality).",
     quick=False,
+    scope="resource",
 )
 def image_too_large(ctx: Context):
     limit = ctx.profile.image_max_kb * 1024
@@ -108,6 +112,7 @@ def image_too_large(ctx: Context):
     "WebP/AVIF are typically 25–50% smaller than JPEG/PNG at the same quality.",
     "Serve WebP or AVIF (WordPress: an image optimisation plugin; or a CDN that converts).",
     quick=False,
+    scope="resource",
 )
 def image_legacy_format(ctx: Context):
     for src, pages in _image_pages(ctx).items():

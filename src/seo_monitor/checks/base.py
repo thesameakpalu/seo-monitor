@@ -64,7 +64,9 @@ class Check:
     fix: str
     func: Callable[[Context], Iterable[Item]]
     quick: bool = True  # also runs in quick mode
-    scope: str = "page"  # "sitemap": items are about sitemap entries (re-checked by re-reading it)
+    # What an item's URL is: "page" (a page on the site), "sitemap" (a sitemap entry, re-checked
+    # by re-reading the sitemap) or "resource" (image or host variant, re-tested every run).
+    scope: str = "page"
 
 
 CHECKS: dict[str, Check] = {}

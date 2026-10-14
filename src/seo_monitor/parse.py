@@ -23,6 +23,11 @@ HEADER_HINTS = {
     "main-navigation",
     "masthead",
 }
+# Signs that the server sends an app shell and the browser builds the page with JavaScript.
+CSR_MARKERS = {
+    "BAILOUT_TO_CLIENT_SIDE_RENDERING": "Next.js page falls back to client-side rendering",
+}
+APP_MOUNT_IDS = ("root", "app", "__next", "__nuxt", "___gatsby", "svelte")
 _WORD_RX = re.compile(r"\w+", re.UNICODE)
 _SPACE_RX = re.compile(r"\s+")
 
@@ -67,6 +72,7 @@ class Document:
     jsonld: list[JsonLd] = field(default_factory=list)
     visible_text: str = ""  # everything a visitor can read (for placeholder detection)
     main_text: str = ""  # body minus header/footer/nav (for thin/duplicate content)
+    js_hint: str | None = None  # why the content looks like it is filled in by JavaScript
 
     @property
     def canonical(self) -> str | None:
@@ -224,7 +230,19 @@ def parse_html(html: str, base_url: str) -> Document:
         doc.visible_text = _collect_text(body, skip_chrome=False)
         main = tree.css_first("main") or tree.css_first("[role=main]")
         doc.main_text = _collect_text(main, False) if main else _collect_text(body, True)
+        doc.js_hint = _js_hint(html, tree)
     return doc
+
+
+def _js_hint(html: str, tree: LexborHTMLParser) -> str | None:
+    for marker, reason in CSR_MARKERS.items():
+        if marker in html:
+            return reason
+    for mount in APP_MOUNT_IDS:
+        node = tree.css_first(f"#{mount}")
+        if node is not None and not _collect_text(node, False):
+            return f"empty #{mount} app container (filled in by JavaScript)"
+    return None
 
 
 def _inside(node: LexborNode, tag: str) -> bool:

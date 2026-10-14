@@ -29,6 +29,7 @@ def _chain_text(v) -> str:
     "and let Google index duplicates.",
     "301-redirect every non-preferred variant (http, and www or non-www) to the preferred "
     "https host in a single hop.",
+    scope="resource",
 )
 def host_duplicate(ctx: Context):
     pref = ctx.crawl.preferred_host
@@ -50,6 +51,7 @@ def host_duplicate(ctx: Context):
     "Host/HTTPS redirect takes more than one hop",
     "Each extra redirect hop slows users and wastes crawl budget.",
     "Redirect http:// and the non-preferred host straight to the final https:// URL.",
+    scope="resource",
 )
 def host_redirect_chain(ctx: Context):
     for v in ctx.crawl.variants:
@@ -63,6 +65,7 @@ def host_redirect_chain(ctx: Context):
     "Host variant redirects to the wrong place",
     "Variants of a page should redirect to the same page on the preferred host.",
     "Make the www/non-www and http redirect preserve the path and land on the preferred host.",
+    scope="resource",
 )
 def host_redirect_wrong_target(ctx: Context):
     pref = ctx.crawl.preferred_host
@@ -80,6 +83,7 @@ def host_redirect_wrong_target(ctx: Context):
     "A www/non-www or http variant does not respond",
     "People type and link to both forms; they should land on the site rather than an error.",
     "Add DNS for the missing host and redirect it to the preferred host.",
+    scope="resource",
 )
 def host_variant_unreachable(ctx: Context):
     for sample, variants in _variants_by_sample(ctx).items():

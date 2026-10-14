@@ -9,7 +9,7 @@ from pathlib import Path
 
 from jinja2 import Environment, PackageLoader, select_autoescape
 
-from .checks import SEVERITIES, Context, Finding, run_checks
+from .checks import CHECKS, SEVERITIES, Context, Finding, run_checks
 from .compare import Change, compare, health_score, make_rechecked, severity_counts
 from .crawl import CrawlResult
 from .store import Store
@@ -49,11 +49,18 @@ def _local(dt: datetime | str | None) -> str:
 
 
 def urls_to_recheck(store: Store, site: str, mode: str) -> list[str]:
-    """Page URLs flagged in the previous comparable run."""
+    """Page URLs flagged in the previous comparable run (images and host variants are re-tested
+    every run anyway, and must not be fetched as pages)."""
     prev = store.previous_run(site, mode)
     if not prev:
         return []
-    return [i["url"] for f in store.findings(prev["id"]).values() for i in f["items"] if i["url"]]
+    return [
+        i["url"]
+        for check_id, f in store.findings(prev["id"]).items()
+        if check_id in CHECKS and CHECKS[check_id].scope in ("page", "sitemap")
+        for i in f["items"]
+        if i["url"]
+    ]
 
 
 def audit(crawl: CrawlResult, store: Store, reports_dir: Path, note: str | None = None) -> Outcome:
