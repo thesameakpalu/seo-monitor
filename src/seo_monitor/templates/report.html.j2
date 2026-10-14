@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEO health · {{ site }} · {{ started }}</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #fff; --text: #1d1d1b; --muted: #6b6b66; --line: #e4e4df;
+  --critical: #c62828; --high: #e65100; --medium: #b28704; --low: #607d8b;
+  --good: #2e7d32; --new: #c62828; --fixed: #2e7d32; --code: #f0f0ec;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615; --panel: #1f1f1d; --text: #ebebe6; --muted: #a3a39c; --line: #33332f;
+    --critical: #ef5350; --high: #ff8a50; --medium: #e0b73a; --low: #90a4ae;
+    --good: #66bb6a; --new: #ef5350; --fixed: #66bb6a; --code: #2a2a27;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 24px; margin: 0 0 4px; }
+h2 { font-size: 18px; margin: 32px 0 12px; }
+a { color: inherit; }
+.muted { color: var(--muted); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; }
+.head { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; justify-content: space-between; }
+.score { text-align: center; min-width: 120px; }
+.score b { display: block; font-size: 44px; line-height: 1; }
+.score.good b { color: var(--good); } .score.mid b { color: var(--medium); } .score.bad b { color: var(--critical); }
+.stats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.stat { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+.alert { border: 2px solid var(--critical); border-radius: 10px; padding: 12px 20px; margin-top: 20px;
+  background: color-mix(in srgb, var(--critical) 8%, var(--panel)); }
+.alert h2 { color: var(--critical); margin: 0 0 8px; }
+.warn { border-left: 4px solid var(--medium); padding: 8px 16px; margin-top: 16px; background: var(--panel); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+ul.plain { margin: 0; padding-left: 18px; }
+ul.plain li { margin: 4px 0; }
+.badge { display: inline-block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 4px; color: #fff; vertical-align: middle; }
+.sev-critical { background: var(--critical); } .sev-high { background: var(--high); }
+.sev-medium { background: var(--medium); } .sev-low { background: var(--low); }
+.st { font-size: 11px; font-weight: 600; text-transform: uppercase; border: 1px solid currentColor;
+  padding: 1px 6px; border-radius: 4px; vertical-align: middle; }
+.st-new, .st-worsened { color: var(--new); } .st-improved, .st-resolved { color: var(--fixed); }
+.st-persisting { color: var(--muted); }
+details.issue { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; }
+details.issue > summary { cursor: pointer; padding: 12px 16px; list-style: none; display: flex; gap: 10px;
+  align-items: center; flex-wrap: wrap; }
+details.issue > summary::-webkit-details-marker { display: none; }
+details.issue > summary .t { font-weight: 600; flex: 1; min-width: 200px; }
+details.issue > summary .n { font-variant-numeric: tabular-nums; color: var(--muted); }
+.body { padding: 0 16px 16px; }
+.fix { background: var(--code); border-radius: 6px; padding: 8px 12px; margin: 8px 0 12px; }
+.items { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+.items td { border-top: 1px solid var(--line); padding: 6px 4px; vertical-align: top; overflow-wrap: anywhere; }
+.items td:first-child { width: 42%; }
+.items tr.is-new td:first-child::before { content: "NEW "; color: var(--new); font-weight: 700; font-size: 10px; }
+pre { white-space: pre-wrap; margin: 0; font-size: 12px; }
+table.simple { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.simple td, table.simple th { text-align: left; border-top: 1px solid var(--line); padding: 6px 4px; overflow-wrap: anywhere; }
+footer { margin-top: 40px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+
+<div class="panel head">
+  <div>
+    <h1>{{ site }}</h1>
+    <div class="muted">{{ start_url }}</div>
+    <div class="muted">{{ mode_label }} · {{ started }} · {{ duration }} · {{ pages }} pages · {{ requests }} requests</div>
+    {% if note %}<div>Note: {{ note }}</div>{% endif %}
+  </div>
+  <div class="score {{ 'good' if score >= 80 else 'mid' if score >= 50 else 'bad' }}">
+    <b>{{ score }}</b><span class="muted">health score{% if prev_score is not none %}<br>was {{ prev_score }}{% endif %}</span>
+  </div>
+</div>
+
+<div class="stats">
+  {% for sev in severities %}<span class="stat"><span class="badge sev-{{ sev }}">{{ sev }}</span> {{ counts[sev] }} issue type{{ 's' if counts[sev] != 1 }}</span>{% endfor %}
+</div>
+
+{% if not complete %}
+<div class="warn"><b>Incomplete run.</b> The crawl was stopped before it finished, so some issues may be missing. This run will not be used as the baseline for the next comparison.</div>
+{% endif %}
+
+{% if criticals %}
+<div class="alert">
+  <h2>Critical problems</h2>
+  <ul class="plain">
+  {% for f in criticals %}<li><b>{{ f.check.title }}</b>: {% for i in f.items[:3] %}{{ i.url }} {{ i.detail }}{% if not loop.last %}; {% endif %}{% endfor %}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<h2>Summary</h2>
+{% if prev_started %}
+<p class="muted">Compared with the previous {{ mode }} run on {{ prev_started }}.</p>
+<div class="grid">
+  <div class="panel">
+    <b>New or worse</b>
+    {% if worse %}<ul class="plain">
+      {% for c in worse[:10] %}<li><span class="badge sev-{{ c.severity }}">{{ c.severity }}</span> {{ c.title }} —
+        {% if c.status == 'new' %}{{ c.count }} new{% else %}{{ c.new_items|length }} more ({{ c.previous_count }} → {{ c.count }}){% endif %}</li>{% endfor %}
+    </ul>{% if worse|length > 10 %}<p class="muted">and {{ worse|length - 10 }} more below.</p>{% endif %}
+    {% else %}<p class="muted">Nothing new. 👍</p>{% endif %}
+  </div>
+  <div class="panel">
+    <b>Fixed since last run</b>
+    {% if better %}<ul class="plain">
+      {% for c in better %}<li>{{ c.title }} — {% if c.status == 'resolved' %}all {{ c.fixed_items|length }} fixed{% else %}{{ c.fixed_items|length }} fixed ({{ c.previous_count }} → {{ c.count }}){% endif %}</li>{% endfor %}
+    </ul>{% else %}<p class="muted">No fixes detected.</p>{% endif %}
+  </div>
+</div>
+{% else %}
+<p>First {{ mode }} run for this site. This run is saved as the baseline; the next run will show what is new, worse and fixed.</p>
+{% endif %}
+
+<h2>All issues ({{ findings|length }})</h2>
+{% if not findings %}<p>No issues found.</p>{% endif %}
+{% for f in findings %}
+{% set ch = changes.get(f.id) %}
+{% set new_ids = ch.new_items|map(attribute='ident')|list if ch and prev_started else [] %}
+<details class="issue" {% if f.severity in ('critical', 'high') %}open{% endif %}>
+  <summary>
+    <span class="badge sev-{{ f.severity }}">{{ f.severity }}</span>
+    <span class="t">{{ f.check.title }}</span>
+    {% if ch and prev_started %}<span class="st st-{{ ch.status }}">{{ ch.status }}</span>{% endif %}
+    <span class="n">{{ f.count }}</span>
+  </summary>
+  <div class="body">
+    <p>{{ f.check.why }}</p>
+    <div class="fix"><b>Fix:</b> {{ f.check.fix }}</div>
+    <table class="items">
+    {% for i in f.items[:item_limit] %}
+      <tr class="{{ 'is-new' if i.ident in new_ids }}"><td>{% if i.url %}<a href="{{ i.url }}" target="_blank" rel="noopener">{{ i.url }}</a>{% else %}<span class="muted">site-wide</span>{% endif %}</td>
+      <td>{% if '\n' in i.detail %}<pre>{{ i.detail }}</pre>{% else %}{{ i.detail }}{% endif %}</td></tr>
+    {% endfor %}
+    </table>
+    {% if f.count > item_limit %}<p class="muted">and {{ f.count - item_limit }} more (export with <code>monitor export {{ run_id }}</code>).</p>{% endif %}
+    <p class="muted">Check id: {{ f.id }}</p>
+  </div>
+</details>
+{% endfor %}
+
+{% if resolved %}
+<h2>Resolved since last run</h2>
+{% for c in resolved %}
+<details class="issue"><summary><span class="badge sev-{{ c.severity }}">{{ c.severity }}</span><span class="t">{{ c.title }}</span><span class="st st-resolved">resolved</span><span class="n">{{ c.fixed_items|length }}</span></summary>
+<div class="body"><table class="items">{% for i in c.fixed_items[:item_limit] %}<tr><td>{{ i.url or 'site-wide' }}</td><td>{{ i.detail }}</td></tr>{% endfor %}</table></div></details>
+{% endfor %}
+{% endif %}
+
+<h2>Crawl details</h2>
+<div class="panel">
+<table class="simple">
+  <tr><th>Homepage</th><td>{{ home_status }}</td></tr>
+  <tr><th>Preferred host</th><td>{{ preferred_host }}</td></tr>
+  <tr><th>robots.txt</th><td>{{ robots_status }}</td></tr>
+  <tr><th>Sitemap files</th><td>{% for sm in sitemaps %}{{ sm.url }} — {{ 'OK' if sm.ok else sm.error }}{% if sm.kind == 'urlset' %} ({{ sm.locs|length }} URLs){% elif sm.kind == 'index' %} (index){% endif %}<br>{% else %}none found{% endfor %}</td></tr>
+  <tr><th>URLs in sitemaps</th><td>{{ sitemap_url_count }}</td></tr>
+  <tr><th>Status codes</th><td>{% for code, n in status_counts %}{{ code }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>
+  <tr><th>Not crawled (page limit)</th><td>{{ over_limit }}</td></tr>
+  <tr><th>Blocked by robots.txt</th><td>{{ blocked }}</td></tr>
+  <tr><th>Skipped (cart/login/admin URLs)</th><td>{{ skipped }}</td></tr>
+  {% for e in errors %}<tr><th>Problem</th><td>{{ e }}</td></tr>{% endfor %}
+</table>
+</div>
+
+<footer>
+  Health score = 100 − Σ weight × (0.5 + 0.5 × share of pages affected); weights critical 25, high 8, medium 3, low 1; any critical issue caps the score at 49.
+  Generated by SEO-Monitor · run #{{ run_id }}.
+</footer>
+</main>
+</body>
+</html>

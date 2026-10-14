@@ -1,0 +1,30 @@
+# Optional saved profiles. Any URL works without being listed here:
+#   monitor run https://example.com
+# A profile adds a short name (monitor run gtm) and per-site tuning.
+# Every setting is optional except url; see README for the full list.
+
+defaults:
+  max_pages: 500        # per full run
+  quick_max_pages: 40   # per quick run
+  delay: 1.0            # seconds between requests to the same host
+
+sites:
+  gtdc:
+    url: https://gtdc.gov.gh
+    max_pages: 1000
+    # Leftovers from the charity/travel demo theme found in the audit.
+    extra_placeholders: ["mytravel.test", "New Section", "Raise Your Hands", "donation", "charity", "test"]
+    placeholder_whitelist: []
+    key_urls: []
+
+  gtm:
+    url: https://www.gtm.com.gh
+    max_pages: 1000
+    extra_placeholders: ["mytravel.test", "test"]
+    thin_content_patterns: ["/location/", "/listing/", "/brief/"]
+    key_urls: []
+
+  gtip:
+    url: https://www.investintourism.org
+    max_pages: 500
+    key_urls: []

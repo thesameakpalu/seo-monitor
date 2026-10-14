@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seo-monitor"
+version = "0.1.0"
+description = "On-demand technical SEO health monitor: crawl any site, flag issues, diff against the last run."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "selectolax>=1.0",
+    "typer>=0.12",
+    "rich>=13",
+    "jinja2>=3.1",
+    "pyyaml>=6",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "black>=24"]
+
+[project.scripts]
+monitor = "seo_monitor.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/seo_monitor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]

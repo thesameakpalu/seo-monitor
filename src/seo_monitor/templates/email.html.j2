@@ -1,0 +1,32 @@
+<!doctype html>
+<html><body style="margin:0;padding:24px;background:#f7f7f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1d1d1b;">
+<div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e4e4df;border-radius:10px;padding:24px;">
+  <h1 style="font-size:20px;margin:0 0 4px;">SEO health: {{ site }}</h1>
+  <p style="margin:0;color:#6b6b66;">{{ mode_label }} · {{ started }} · {{ pages }} pages</p>
+  <p style="font-size:32px;font-weight:700;margin:16px 0 0;color:{{ '#2e7d32' if score >= 80 else '#b28704' if score >= 50 else '#c62828' }};">{{ score }}<span style="font-size:14px;font-weight:400;color:#6b6b66;"> / 100{% if prev_score is not none %} (was {{ prev_score }}){% endif %}</span></p>
+  {% if note %}<p>Note: {{ note }}</p>{% endif %}
+  {% if not complete %}<p style="color:#b28704;"><b>Incomplete run</b>: the crawl was stopped early.</p>{% endif %}
+
+  {% if criticals %}
+  <div style="border:2px solid #c62828;border-radius:8px;padding:12px 16px;margin:16px 0;">
+    <b style="color:#c62828;">Critical problems</b>
+    <ul style="margin:8px 0 0;padding-left:18px;">{% for f in criticals %}<li>{{ f.check.title }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  {% if prev_started %}
+  <h2 style="font-size:16px;margin:20px 0 8px;">New or worse since {{ prev_started }}</h2>
+  {% if worse %}<ul style="padding-left:18px;margin:0;">{% for c in worse[:10] %}<li><b>{{ c.severity|upper }}</b> {{ c.title }} ({% if c.status == 'new' %}{{ c.count }} new{% else %}{{ c.previous_count }} → {{ c.count }}{% endif %})</li>{% endfor %}</ul>
+  {% else %}<p style="margin:0;color:#6b6b66;">Nothing new.</p>{% endif %}
+  <h2 style="font-size:16px;margin:20px 0 8px;">Fixed</h2>
+  {% if better %}<ul style="padding-left:18px;margin:0;">{% for c in better %}<li>{{ c.title }} ({{ c.fixed_items|length }} fixed)</li>{% endfor %}</ul>
+  {% else %}<p style="margin:0;color:#6b6b66;">No fixes detected.</p>{% endif %}
+  {% else %}
+  <p>First run for this site; it is saved as the baseline for future comparisons.</p>
+  {% endif %}
+
+  <h2 style="font-size:16px;margin:20px 0 8px;">Top issues</h2>
+  <ul style="padding-left:18px;margin:0;">{% for f in findings[:10] %}<li><b>{{ f.severity|upper }}</b> {{ f.check.title }} ({{ f.count }})</li>{% endfor %}</ul>
+  <p style="color:#6b6b66;font-size:13px;margin-top:20px;">The full report with every affected URL and fix is attached.</p>
+</div>
+</body></html>

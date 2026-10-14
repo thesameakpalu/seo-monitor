@@ -1,0 +1,16 @@
+# schema.org @type -> properties we expect to see. Edit freely.
+# This is a completeness check only, not a rich-result eligibility test.
+Organization: [name, url, logo]
+GovernmentOrganization: [name, url, logo]
+WebSite: [name, url]
+BreadcrumbList: [itemListElement]
+Event: [name, startDate, location]
+Article: [headline, image, datePublished, author]
+NewsArticle: [headline, image, datePublished, author]
+BlogPosting: [headline, image, datePublished, author]
+LodgingBusiness: [name, address]
+Hotel: [name, address]
+LocalBusiness: [name, address]
+TouristAttraction: [name, address]
+Product: [name]
+FAQPage: [mainEntity]
