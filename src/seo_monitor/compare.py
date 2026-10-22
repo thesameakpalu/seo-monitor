@@ -36,10 +36,13 @@ Rechecked = Callable[[str, Item], bool]
 def make_rechecked(crawl: CrawlResult) -> Rechecked:
     """Was a previously reported item looked at again in this run?
 
-    Page items: only if the URL was fetched again. Sitemap items: also if the sitemaps were read
-    and the URL is no longer listed. Site-wide items (no URL): always.
+    Page items: only if the URL was fetched again and answered (a timeout proves nothing).
+    Sitemap items: also if the sitemaps were read and the URL is no longer listed. Site-wide
+    items (no URL): always.
     """
-    checked = crawl.checked_urls
+    unanswered = {u for u, p in crawl.pages.items() if p.fetch.transient}
+    unanswered |= {u for u, r in crawl.resources.items() if r.transient}
+    checked = crawl.checked_urls - unanswered
     sitemaps_read = bool(crawl.sitemaps) and all(sm.ok for sm in crawl.sitemaps)
 
     def rechecked(check_id: str, item: Item) -> bool:

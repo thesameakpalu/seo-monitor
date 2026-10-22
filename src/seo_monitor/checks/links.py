@@ -22,15 +22,50 @@ DEV_HOST_RX = re.compile(
     quick=False,
 )
 def broken_internal_links(ctx: Context):
+    # Only definite answers (404, 410, redirect loop...). Timeouts are not proof a page is gone.
+    yield from _links_to(ctx, lambda res: res.broken)
+
+
+@check(
+    "unreachable_urls",
+    "medium",
+    "Pages or files that timed out, were refused, or answered 'server busy/error'",
+    "These URLs did not answer properly even after several tries spread over the run "
+    "(timeouts, 5xx such as 508 'resource limit reached', or 403 refusals while the server was "
+    "also refusing other pages). That is usually the hosting or its firewall struggling under "
+    "load, not a missing page, so they are not counted as broken links. Google sees the same "
+    "slowness and crawls less when it does.",
+    "Open a few of them: if they load, the server is slow under load. Check hosting resources "
+    "(CPU/entry-process limits), page caching and any firewall/CDN rate limiting. Entries "
+    "marked 'while the rest of the site loaded' fail on their own: fix those pages first.",
+)
+def unreachable_urls(ctx: Context):
+    linked = {target: pages for target, pages in _link_sources(ctx, lambda res: res.transient)}
+    failed = {
+        u: p.fetch
+        for u, p in ctx.crawl.pages.items()
+        if p.fetch.transient and p is not ctx.crawl.home  # the homepage has its own check
+    }
+    failed.update({u: r for u, r in ctx.crawl.resources.items() if r.transient})
+    for url, res in failed.items():
+        where = f" — linked {on_pages(linked[url])}" if url in linked else ""
+        yield Item(url, f"{res.describe()}{where}")
+
+
+def _link_sources(ctx: Context, matches):
     pairs = []
     for page in ctx.html_pages:
         for link in page.doc.links:
             if not ctx.crawl.is_internal(link.url):
                 continue
             res = ctx.crawl.lookup(link.url)
-            if res and (res.loop or res.status is None or res.status >= 400):
+            if res and matches(res):
                 pairs.append((link.url, page.final_url))
-    for target, pages in group_by(pairs).items():
+    return group_by(pairs).items()
+
+
+def _links_to(ctx: Context, matches):
+    for target, pages in _link_sources(ctx, matches):
         yield Item(target, f"{ctx.crawl.lookup(target).describe()} — linked {on_pages(pages)}")
 
 

@@ -24,7 +24,7 @@ def _sitemap_pages(ctx: Context):
 )
 def sitemap_url_error(ctx: Context):
     for url, page in _sitemap_pages(ctx):
-        if not page.fetch.ok:
+        if page.fetch.broken:  # timeouts and "busy" answers go to unreachable_urls
             yield Item(url, page.fetch.describe())
 
 
@@ -130,7 +130,7 @@ def canonical_target_error(ctx: Context):
         if not c or normalize(c) == page.final_url:
             continue
         res = ctx.crawl.lookup(c)
-        if res is None:
+        if res is None or res.transient:
             continue
         if res.redirected or not res.ok:
             what = f"redirects to {res.final_url}" if res.ok else res.describe()
@@ -165,5 +165,5 @@ def became_broken(ctx: Context):
         return
     for page in ctx.pages:
         before = ctx.prev.pages.get(page.url)
-        if before and before.get("status") == 200 and not page.fetch.ok:
+        if before and before.get("status") == 200 and page.fetch.broken:
             yield Item(page.url, f"was 200, now {page.fetch.describe()}")

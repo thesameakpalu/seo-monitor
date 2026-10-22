@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+from datetime import UTC, datetime, timedelta
 
 from seo_monitor.checks import Item
 from seo_monitor.checks.content import _snippet, _term_rx
@@ -174,3 +175,36 @@ def test_detects_client_side_rendering():
     assert "#root" in parse_html(spa, "https://x/").js_hint
     ssr = '<html><body><div id="__next"><main><h1>Hello</h1></main></div></body></html>'
     assert parse_html(ssr, "https://x/").js_hint is None
+
+
+def test_status_classification():
+    from seo_monitor.fetch import FetchResult
+
+    def res(status, **kw):
+        return FetchResult(url="u", final_url="u", status=status, **kw)
+
+    assert res(404).broken and res(410).broken and not res(404).transient
+    for busy in (429, 500, 503, 508, 509, 530):  # 508: shared hosting "resource limit reached"
+        assert res(busy).transient and not res(busy).broken, busy
+    assert res(403).transient and not res(403).broken  # unconfirmed refusal: maybe a firewall
+    assert res(403, confirmed=True).broken
+    assert not res(500, confirmed=True).broken  # a server error is never a "broken link"
+    assert "resource limit" in res(508).describe()
+    assert res(None, network_error=True, error="timed out").transient
+    assert res(None, error="SSL/TLS problem").broken
+
+
+def test_retry_after_header():
+    from email.utils import format_datetime
+
+    from seo_monitor.fetch import Fetcher, FetchResult
+
+    def wait(value):
+        return Fetcher._retry_after(
+            FetchResult(url="u", final_url="u", headers={"retry-after": value})
+        )
+
+    assert wait("7") == 7.0 and wait("999") == 60.0
+    soon = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+    assert 25 <= wait(soon) <= 30
+    assert wait("garbage") is None

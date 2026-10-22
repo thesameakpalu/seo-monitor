@@ -18,6 +18,9 @@ HOST_SAMPLES = 5  # pages (besides the homepage) whose http/https/www/non-www va
 CANONICAL_TARGET_CHECKS = 100
 RECHECK_LIMIT = 200  # URLs flagged in the previous run that are re-visited to confirm fixes
 OG_IMAGE_CHECKS = 50
+CONFIRM_LIMIT = 300  # failed URLs re-tested at the end before being reported
+STRUGGLING_STOP = 3  # control requests failing in a row: the server is down, stop confirming
+FOUNDATION_ROUNDS = 3  # tries, a little apart, at the homepage, robots.txt and sitemaps
 
 
 @dataclass
@@ -105,7 +108,9 @@ class CrawlResult:
 
     def add_page(self, page: Page) -> None:
         self.pages[page.url] = page
-        self._by_final.setdefault(page.final_url, page)
+        known = self._by_final.get(page.final_url)
+        if known is None or known.url == page.url or not known.fetch.ok:
+            self._by_final[page.final_url] = page
 
     def lookup(self, url: str) -> FetchResult | None:
         """Fetch result for a URL that was requested (page or resource) or reached by redirect."""
@@ -151,28 +156,12 @@ async def crawl(result: CrawlResult, fetcher: Fetcher, progress: ProgressFn | No
     quick = result.mode == "quick"
     notify = progress or (lambda r, msg: None)
     try:
-        result.start_url = start = normalize(p.url)
-        notify(result, start)
-        result.add_page(_make_page(start, await fetcher.fetch(start), "start"))
-        result.home = result.pages[start]
-        home_final = result.home.final_url if result.is_internal(result.home.final_url) else start
-
-        robots_url = origin(home_final) + "/robots.txt"
-        notify(result, robots_url)
-        res = await fetcher.fetch(robots_url)
-        if res.ok:
-            result.robots = parse_robots(robots_url, res.text(), res.status)
-        else:
-            result.robots = parse_robots(robots_url, "", res.status)
-            result.robots.error = res.describe()
+        result.start_url = normalize(p.url)
+        if not await _fetch_foundation(result, fetcher, notify):
+            return  # the homepage never answered: report that alone, not a crawl of nothing
         delay = result.robots.crawl_delay()
         if delay and delay > fetcher.delay:
             fetcher.delay = min(delay, 10.0)
-
-        seeds = [(u, "robots") for u in result.robots.sitemaps]
-        seeds += [(u, "profile") for u in p.sitemaps]
-        notify(result, "sitemaps")
-        result.sitemaps = await load_sitemaps(fetcher, seeds, origin(home_final))
         for sm in result.sitemaps:
             if sm.kind == "urlset":
                 for loc in sm.locs:
@@ -182,10 +171,54 @@ async def crawl(result: CrawlResult, fetcher: Fetcher, progress: ProgressFn | No
         await _recheck_previous(result, fetcher, notify)
         await _check_host_variants(result, fetcher, notify)
         await _check_resources(result, fetcher, notify, quick)
+        await _confirm_failures(result, fetcher, notify)
         result.complete = True
     finally:
         result.finished_at = datetime.now(UTC)
         result.requests = fetcher.requests
+
+
+async def _fetch_foundation(result: CrawlResult, fetcher: Fetcher, notify) -> bool:
+    """Homepage, robots.txt and sitemaps. Whatever failed for a temporary reason (our own
+    connection, a busy server) is tried again in later rounds, so a blip at the start does not
+    become "robots.txt missing" or "no sitemap". False if the homepage never answered."""
+    p = result.profile
+    start = result.start_url
+    robots_res: FetchResult | None = None
+    sitemaps_done = False
+    for round_ in range(FOUNDATION_ROUNDS):
+        if round_:
+            await asyncio.sleep(fetcher.retry_wait * 6 * round_)
+        last = round_ == FOUNDATION_ROUNDS - 1
+        if result.home is None or result.home.fetch.transient:
+            notify(result, start)
+            result.add_page(_make_page(start, await fetcher.fetch(start), "start"))
+            result.home = result.pages[start]
+            if result.home.fetch.transient:
+                continue
+        home_final = result.home.final_url if result.is_internal(result.home.final_url) else start
+
+        if robots_res is None or robots_res.transient:
+            robots_url = origin(home_final) + "/robots.txt"
+            notify(result, robots_url)
+            robots_res = await fetcher.fetch(robots_url)
+            if robots_res.ok:
+                result.robots = parse_robots(robots_url, robots_res.text(), robots_res.status)
+            else:
+                result.robots = parse_robots(robots_url, "", robots_res.status)
+                result.robots.error = robots_res.describe()
+            if robots_res.transient and not last:
+                continue  # its Sitemap: lines decide which sitemaps to read
+
+        if not sitemaps_done:
+            seeds = [(u, "robots") for u in result.robots.sitemaps]
+            seeds += [(u, "profile") for u in p.sitemaps]
+            notify(result, "sitemaps")
+            result.sitemaps = await load_sitemaps(fetcher, seeds, origin(home_final))
+            sitemaps_done = not any(sm.transient for sm in result.sitemaps)
+        if sitemaps_done and not robots_res.transient:
+            break
+    return not result.home.fetch.transient
 
 
 async def _crawl_pages(result: CrawlResult, fetcher: Fetcher, notify, quick: bool) -> None:
@@ -320,3 +353,62 @@ async def _check_resources(result: CrawlResult, fetcher: Fetcher, notify, quick:
     if not quick:
         # Presigned URLs are reported regardless; fetching them adds nothing.
         await check([u for u in images if not is_presigned(u)], p.image_checks, "size")
+
+
+async def _confirm_failures(result: CrawlResult, fetcher: Fetcher, notify) -> None:
+    """Re-test every failed URL after a cool-down before anything is reported.
+
+    A 404 must happen again. A refusal (403), 5xx or timeout is pinned on the URL only if, right
+    then, a control request to a page that worked earlier still loads; otherwise the server (or
+    its firewall) is struggling and the URL is reported as unreachable, never as broken. Pages
+    that recover are stored with their new answer, so they drop out of every check.
+    """
+    failed: dict[str, FetchResult] = {}
+    for url, page in result.pages.items():
+        if page.fetch.broken or page.fetch.transient:
+            failed[url] = page.fetch
+    for url, res in result.resources.items():
+        if res.broken or res.transient:
+            failed[url] = res
+    if not failed:
+        return
+    # Refusals and 404s first: those are the ones that would be reported as broken.
+    todo = sorted(failed, key=lambda u: failed[u].server_trouble)[:CONFIRM_LIMIT]
+    controls = _control_pages(result, set(failed))
+    await asyncio.sleep(fetcher.retry_wait * 6)
+    struggling = used = 0
+    for url in todo:
+        notify(result, url)
+        before = failed[url]
+        mode = "page" if url in result.pages or before.body is not None else "size"
+        res = await fetcher.fetch(url, body=mode, retries=1)
+        res.attempts += before.attempts
+        if res.broken:
+            res.confirmed = True
+        elif res.transient and controls:
+            control = await fetcher.fetch(controls[used % len(controls)], retries=0)
+            used += 1
+            if control.ok:
+                res.confirmed, struggling = True, 0
+            else:
+                struggling += 1
+        if url in result.pages:
+            result.add_page(_make_page(url, res, result.pages[url].source))
+        else:
+            result.resources[url] = res
+        if struggling >= STRUGGLING_STOP:
+            break  # the whole site is failing; what is left stays "unreachable"
+        if struggling:
+            await asyncio.sleep(fetcher.retry_wait * 6)
+
+
+def _control_pages(result: CrawlResult, failed: set[str]) -> list[str]:
+    """Pages that loaded earlier, for checking the server is healthy. Not the homepage first:
+    it is often served from a cache while uncached pages hit the hosting limits."""
+    pages = [
+        u
+        for u, page in result.pages.items()
+        if page.is_ok_html and u not in failed and result.is_internal(page.final_url)
+    ]
+    others = [u for u in pages if u != result.start_url]
+    return others[:20] or pages[:1]

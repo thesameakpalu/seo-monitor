@@ -48,7 +48,11 @@ def og_image_broken(ctx: Context):
         og = page.doc.og.get("og:image")
         if og and og.startswith("http"):
             res = ctx.crawl.lookup(og)
-            if res and (not res.ok or not res.content_type.startswith("image/")):
+            if (
+                res
+                and not res.transient
+                and (not res.ok or not res.content_type.startswith("image/"))
+            ):
                 why = res.describe() if not res.ok else f"not an image ({res.content_type})"
                 pairs.append((f"{normalize(og)}|{why}", page.final_url))
     for key, pages in group_by(pairs).items():
@@ -68,7 +72,7 @@ def og_image_broken(ctx: Context):
 def image_broken(ctx: Context):
     for src, pages in _image_pages(ctx).items():
         res = ctx.crawl.resources.get(src)
-        if res and not res.ok:
+        if res and res.broken:
             yield Item(src, f"{res.describe()} — {on_pages(pages)}", key=src)
 
 

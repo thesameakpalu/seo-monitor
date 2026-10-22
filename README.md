@@ -52,7 +52,27 @@ is only marked fixed if its URL was actually checked again.
   longer is honoured. robots.txt rules are respected, including `*` and `$` wildcards.
 - URLs that can change state even over GET (`add-to-cart=`, `/cart`, `/checkout`, `/wp-admin`,
   login/logout, ...) are never requested. Add more with `skip_patterns`.
-- User-Agent: `SEO-Monitor/0.1.0 (+MONITOR_CONTACT)`.
+- User-Agent: `Mozilla/5.0 (compatible; SEO-Monitor/0.1.0; +MONITOR_CONTACT)` (the standard
+  crawler form, as Googlebot uses).
+
+## How broken links are confirmed
+
+A URL is only reported as **broken** when the answer is definite and repeatable:
+
+1. Timeouts, dropped connections, "busy" answers (429, any 5xx such as 508 "resource limit
+   reached") and refusals (401/403/406) are retried twice (after 5s and 15s) and that host is
+   slowed down. After 3 failures in a row the host is paused (30s, doubling up to 5 min), so a
+   struggling server or firewall is not pushed into blocking the crawl.
+2. At the end, every failed URL is tested again after a cool-down. A 404/410 must repeat.
+   A refusal or server error is pinned on the URL only if, at that moment, a page that loaded
+   earlier still loads (a control request); otherwise the server is struggling.
+3. **Broken** = repeated 404/410-type answers, refusals confirmed that way, redirect loops and
+   certificate errors. Everything else that never answered properly is listed separately as
+   **unreachable** (usually hosting load or firewall rate limits), never as a broken link.
+
+The homepage, robots.txt and sitemaps get up to 3 rounds a little apart, so a brief blip in
+your own connection does not turn into "robots.txt missing" or "no sitemap". If the homepage
+never answers, the report says only that.
 
 ## Profiles (`sites.yaml`, optional)
 

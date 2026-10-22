@@ -201,6 +201,12 @@ def run(
         if result.home is None:
             console.print(f"[red]{result.site}: nothing was crawled.[/]")
             continue
+        if result.home.fetch.transient:
+            console.print(
+                f"[red]{result.site}: the homepage never answered "
+                f"({result.home.fetch.describe()}). Check your own internet connection first; "
+                "if it works, the site or its hosting is down.[/]"
+            )
         outcome = audit(result, store, home / "reports", note)
         _print_outcome(outcome)
         if open_report:

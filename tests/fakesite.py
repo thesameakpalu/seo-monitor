@@ -192,7 +192,10 @@ def transport(routes: dict[str, tuple[int, dict, str]], log: list[str] | None = 
         url = normalize(str(request.url))
         if log is not None:
             log.append(f"{request.method} {url}")
-        status, headers, body = table.get(url, (404, {"content-type": "text/html"}, "nope"))
+        entry = table.get(url, (404, {"content-type": "text/html"}, "nope"))
+        if callable(entry):  # simulate slow/flaky servers: may raise or answer differently
+            entry = entry(request)
+        status, headers, body = entry
         return httpx.Response(status, headers=headers, content=body.encode())
 
     return httpx.MockTransport(handler)

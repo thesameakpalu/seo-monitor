@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin
 
 import httpx
@@ -12,6 +14,29 @@ import httpx
 from .urls import host_of, normalize
 
 REDIRECT_CODES = {301, 302, 303, 307, 308}
+# 4xx answers that mean "busy, try later"; every 5xx is treated the same way (shared hosting
+# answers 508 "resource limit reached" when a crawl uses its CPU quota).
+BUSY_CODES = {408, 425, 429}
+# "Access denied" is usually a firewall reacting to the crawl, not a dead page. It only counts
+# as broken once confirmed: still refused after a cool-down while the rest of the site answers.
+BLOCKED_CODES = {401, 403, 406, 451}
+REASONS = {
+    401: "login required",
+    403: "access denied",
+    406: "refused by server rules",
+    408: "request timeout",
+    429: "too many requests",
+    451: "blocked for legal reasons",
+    500: "server error",
+    502: "bad gateway",
+    503: "service unavailable",
+    504: "gateway timeout",
+    508: "hosting resource limit reached",
+    509: "bandwidth limit exceeded",
+}
+MAX_HOST_DELAY = 10.0
+PAUSE_AFTER = 3  # failures in a row on one host before it gets a pause
+MAX_PAUSE = 300.0
 TEXT_TYPES = ("text/", "application/xhtml+xml", "application/xml", "application/rss+xml")
 
 
@@ -27,6 +52,11 @@ class FetchResult:
     elapsed_ms: int = 0
     error: str | None = None
     loop: bool = False
+    network_error: bool = False  # timeout, dropped or refused connection (not SSL)
+    attempts: int = 1
+    # Failed again after a cool-down while a page that worked earlier still loaded, so the
+    # failure belongs to this URL rather than to a struggling or defensive server.
+    confirmed: bool = False
 
     @property
     def content_type(self) -> str:
@@ -41,15 +71,44 @@ class FetchResult:
         return self.status == 200 and not self.error
 
     @property
+    def server_trouble(self) -> bool:
+        """No answer, "busy" or a 5xx: the server failed, whatever the URL."""
+        return self.network_error or self.status in BUSY_CODES or (self.status or 0) >= 500
+
+    @property
+    def blocked(self) -> bool:
+        return self.status in BLOCKED_CODES
+
+    @property
+    def transient(self) -> bool:
+        """Failed in a way that says more about the server's load (or firewall) than the URL."""
+        return self.server_trouble or (self.blocked and not self.confirmed)
+
+    @property
+    def broken(self) -> bool:
+        """Definitely broken: a 404/410-type answer, a confirmed refusal, a redirect loop or a
+        permanent error such as a bad certificate."""
+        return (
+            not self.ok
+            and not self.transient
+            and (self.loop or self.status is None or self.status >= 400)
+        )
+
+    @property
     def redirected(self) -> bool:
         return bool(self.chain)
 
     def describe(self) -> str:
         if self.loop:
-            return "redirect loop"
-        if self.error and self.status is None:
-            return self.error
-        return f"HTTP {self.status}" + (f" ({self.error})" if self.error else "")
+            text = "redirect loop"
+        elif self.error and self.status is None:
+            text = self.error
+        else:
+            reason = self.error or REASONS.get(self.status or 0)
+            text = f"HTTP {self.status}" + (f" ({reason})" if reason else "")
+        if self.confirmed and self.server_trouble:
+            text += ", while the rest of the site loaded"
+        return text + (f", {self.attempts} attempts" if self.attempts > 1 else "")
 
     def text(self) -> str:
         if not self.body:
@@ -72,13 +131,19 @@ def _describe_error(exc: Exception, timeout: float) -> str:
     if "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg:
         return f"SSL/TLS problem: {msg[:160]}"
     if isinstance(exc, httpx.ConnectError):
-        return f"could not connect (DNS or connection refused): {msg[:120]}"
+        return "could not connect (refused, dropped or DNS failure)" + (
+            f": {msg[:120]}" if msg else ""
+        )
     return f"{type(exc).__name__}: {msg[:160]}" if msg else type(exc).__name__
 
 
 class Fetcher:
     """One shared client. Every request waits its turn per host, so concurrency never
-    exceeds ``1 / delay`` requests per second on any host."""
+    exceeds ``1 / delay`` requests per second on any host.
+
+    Timeouts, dropped connections, "busy" answers (429/5xx) and refusals (403) are retried
+    after a pause and that host is slowed down; after several failures in a row the host gets a
+    growing pause (circuit breaker), so a struggling server is not pushed into blocking us."""
 
     def __init__(
         self,
@@ -87,11 +152,17 @@ class Fetcher:
         timeout: float = 20.0,
         max_body: int = 5_000_000,
         transport: httpx.AsyncBaseTransport | None = None,
+        retries: int = 2,
+        retry_wait: float = 5.0,
     ):
         self.delay = delay
         self.timeout = timeout
         self.max_body = max_body
+        self.retries = retries
+        self.retry_wait = retry_wait
         self.requests = 0
+        self.slowed: dict[str, float] = {}  # host -> extra delay added after transient failures
+        self.failures: dict[str, int] = {}  # host -> transient failures in a row
         self._next: dict[str, float] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._client = httpx.AsyncClient(
@@ -114,14 +185,59 @@ class Fetcher:
             wait = self._next.get(host, 0.0) - time.monotonic()
             if wait > 0:
                 await asyncio.sleep(wait)
-            self._next[host] = time.monotonic() + self.delay
+            self._next[host] = time.monotonic() + self.delay + self.slowed.get(host, 0.0)
 
-    async def fetch(self, url: str, body: str = "page", max_redirects: int = 10) -> FetchResult:
-        """GET ``url`` following redirects manually.
+    def _slow_down(self, host: str) -> None:
+        current = self.slowed.get(host, 0.0)
+        self.slowed[host] = min(max(current * 2, self.delay), MAX_HOST_DELAY)
+        failures = self.failures[host] = self.failures.get(host, 0) + 1
+        if failures >= PAUSE_AFTER:
+            pause = min(self.retry_wait * 6 * 2 ** (failures - PAUSE_AFTER), MAX_PAUSE)
+            self._next[host] = max(self._next.get(host, 0.0), time.monotonic() + pause)
+
+    def _recover(self, host: str) -> None:
+        self.failures.pop(host, None)
+        if host in self.slowed:
+            self.slowed[host] /= 2
+            if self.slowed[host] < 0.1:
+                del self.slowed[host]
+
+    async def fetch(
+        self, url: str, body: str = "page", max_redirects: int = 10, retries: int | None = None
+    ) -> FetchResult:
+        """GET ``url`` following redirects manually, retrying transient failures.
 
         body: "page" reads text/XML bodies only; "full" reads any body (sitemaps, maybe gzipped);
         "size" streams the body only to measure it when Content-Length is missing.
         """
+        retries = self.retries if retries is None else retries
+        for attempt in range(retries + 1):
+            res = await self._fetch_once(url, body, max_redirects)
+            res.attempts = attempt + 1
+            if not res.transient:
+                self._recover(host_of(res.final_url))
+                return res
+            self._slow_down(host_of(res.final_url))
+            if attempt == retries:
+                return res
+            await asyncio.sleep(self._retry_after(res) or self.retry_wait * 3**attempt)
+        return res
+
+    @staticmethod
+    def _retry_after(res: FetchResult) -> float | None:
+        """Seconds asked for by a Retry-After header (seconds or HTTP date), capped at 60."""
+        value = res.headers.get("retry-after", "").strip()
+        if value.isdigit():
+            return min(float(value), 60.0)
+        try:
+            when = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        return min(max((when - datetime.now(UTC)).total_seconds(), 0.0), 60.0) or None
+
+    async def _fetch_once(self, url: str, body: str, max_redirects: int) -> FetchResult:
         res = FetchResult(url=url, final_url=url)
         current, seen = url, {url}
         started = time.monotonic()
@@ -150,6 +266,9 @@ class Fetcher:
             res.error = f"more than {max_redirects} redirects"
         except httpx.HTTPError as exc:
             res.error = _describe_error(exc, self.timeout)
+            res.network_error = isinstance(exc, httpx.TransportError) and not res.error.startswith(
+                "SSL"
+            )
         finally:
             res.elapsed_ms = int((time.monotonic() - started) * 1000)
         return res

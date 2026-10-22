@@ -108,9 +108,15 @@ _FIELDS = {f.name for f in fields(Profile)}
 
 
 def user_agent() -> str:
+    # The standard crawler form (as Googlebot/Bingbot use): firewalls that refuse anything not
+    # starting with "Mozilla/5.0" let it through, and it still names the bot honestly.
     contact = os.getenv("MONITOR_CONTACT", "").strip()
     ua = f"SEO-Monitor/{VERSION}"
-    return f"{ua} (+{contact})" if contact else ua
+    return (
+        f"Mozilla/5.0 (compatible; {ua}; +{contact})"
+        if contact
+        else f"Mozilla/5.0 (compatible; {ua})"
+    )
 
 
 def _as_url(target: str) -> str:

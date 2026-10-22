@@ -26,6 +26,7 @@ class SitemapFile:
     error: str | None = None
     kind: str = ""  # urlset | index
     locs: list[str] = field(default_factory=list)
+    transient: bool = False  # timed out or "server busy": says nothing about the sitemap
 
     @property
     def ok(self) -> bool:
@@ -78,6 +79,7 @@ async def load_sitemaps(
             final_url=res.final_url,
             redirected=res.redirected,
             error=res.error,
+            transient=res.transient,
         )
         if res.ok and res.body:
             try:
@@ -85,9 +87,9 @@ async def load_sitemaps(
             except (ET.ParseError, OSError, EOFError) as exc:
                 sm.error = f"not a valid XML sitemap ({exc.__class__.__name__})"
         elif res.status and res.status != 200:
-            sm.error = f"HTTP {res.status}"
-        if source == "guess" and not sm.ok:
-            continue  # failed guesses are not errors
+            sm.error = res.describe()
+        if source == "guess" and not sm.ok and not sm.transient:
+            continue  # a guess that is not there is not an error
         files.append(sm)
         if sm.kind == "index":
             queue.extend((loc, "index") for loc in sm.locs)

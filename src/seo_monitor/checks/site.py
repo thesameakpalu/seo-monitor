@@ -7,6 +7,12 @@ import difflib
 from .base import Context, Item, check
 
 
+def _site_unreachable(ctx: Context) -> bool:
+    """The homepage never answered, so robots.txt and sitemaps were never really checked."""
+    home = ctx.crawl.home
+    return home is None or home.fetch.transient
+
+
 @check(
     "homepage_not_200",
     "critical",
@@ -78,7 +84,7 @@ def sitemap_unreachable(ctx: Context):
     "Publish a sitemap (e.g. Yoast/RankMath on WordPress) and reference it in robots.txt.",
 )
 def sitemap_missing(ctx: Context):
-    if not ctx.crawl.sitemaps:
+    if not ctx.crawl.sitemaps and not _site_unreachable(ctx):
         yield Item("", "No sitemap in robots.txt and none at /sitemap.xml, /sitemap_index.xml")
 
 
@@ -104,7 +110,7 @@ def sitemap_file_redirects(ctx: Context):
 )
 def robots_missing(ctx: Context):
     robots = ctx.crawl.robots
-    if robots and not robots.found:
+    if robots and not robots.found and not _site_unreachable(ctx):
         yield Item(robots.url, robots.error or f"HTTP {robots.status}")
 
 
